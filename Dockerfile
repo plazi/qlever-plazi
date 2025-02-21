@@ -2,7 +2,7 @@ FROM buildpack-deps:buster-curl AS build-stage
 
 # Install raptor
 RUN apt-get update
-RUN DEBIAN_FRONTEND=noninteractive apt install -y git raptor2-utils
+RUN DEBIAN_FRONTEND=noninteractive apt install -y git jq
 
 # Add shell script and grant execution rights
 ADD prepare-rdf.sh /prepare-rdf.sh
@@ -10,16 +10,14 @@ RUN chmod +x /prepare-rdf.sh
 
 RUN mkdir -p /workspace
 
-RUN chmod +x /prepare-rdf.sh
-
-RUN /prepare-rdf.sh
+RUN /prepare-rdf.sh && echo "Cache busted at $(date)"
 
 FROM adfreiburg/qlever AS runtime-image
 
 RUN mkdir -p /qlever
 WORKDIR /qlever
 
-COPY --from=build-stage /workspace/treatments.nt /qlever/treatments.nt
+COPY --from=build-stage /workspace/plazi-treatments.nq /qlever/treatments.nq
 ADD Qleverfile /qlever/Qleverfile
 
 RUN qlever index

@@ -10,7 +10,7 @@ BASE_URL          = https://github.com/plazi
 TEXT_DESCRIPTION  = All literals, search with FILTER CONTAINS(?var, "...")
 
 [index]
-INPUT_FILES     = treatments.nt
+INPUT_FILES     = treatments.nq
 CAT_INPUT_FILES = cat ${INPUT_FILES}
 SETTINGS_JSON   = { "ascii-prefixes-only": false, "num-triples-per-batch": 100000 }
 
