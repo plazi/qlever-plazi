@@ -14,7 +14,6 @@ RUN /prepare-rdf.sh && echo "Cache busted at $(date)"
 
 FROM adfreiburg/qlever AS runtime-image
 
-RUN mkdir -p /qlever
 WORKDIR /qlever
 
 COPY --from=build-stage /workspace/plazi-treatments.nq /qlever/treatments.nq
@@ -22,5 +21,6 @@ ADD Qleverfile /qlever/Qleverfile
 
 RUN qlever index
 
-CMD [ "qlever", "start" ]
+ENTRYPOINT [ "qlever" ]
+CMD [ "start", "--description", "Plazi Treatments", "--run-in-foreground" ]
 
