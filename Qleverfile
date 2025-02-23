@@ -8,17 +8,21 @@
 NAME              = plazi
 BASE_URL          = https://github.com/plazi
 TEXT_DESCRIPTION  = All literals, search with FILTER CONTAINS(?var, "...")
+FORMAT = nq
 
 [index]
 INPUT_FILES     = treatments.nq
 CAT_INPUT_FILES = cat ${INPUT_FILES}
 SETTINGS_JSON   = { "ascii-prefixes-only": false, "num-triples-per-batch": 100000 }
+PARSER_BUFFER_SIZE = 20G
+STXXL_MEMORY       = 80G
+ULIMIT             = 10000
 
 [server]
 PORT               = 7019
 ACCESS_TOKEN       = ${data:NAME}_7643543846_77ezBeUmRXhK
-MEMORY_FOR_QUERIES = 5G
-CACHE_MAX_SIZE     = 2G
+MEMORY_FOR_QUERIES = 15G
+CACHE_MAX_SIZE     = 20G
 TIMEOUT            = 30s
 
 [runtime]
