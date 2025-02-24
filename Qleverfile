@@ -11,7 +11,7 @@ TEXT_DESCRIPTION  = All literals, search with FILTER CONTAINS(?var, "...")
 FORMAT = nq
 
 [index]
-INPUT_FILES     = treatments.nq
+INPUT_FILES     = treatments.nq col.nt
 CAT_INPUT_FILES = cat ${INPUT_FILES}
 SETTINGS_JSON   = { "ascii-prefixes-only": false, "num-triples-per-batch": 100000 }
 PARSER_BUFFER_SIZE = 20G
@@ -21,9 +21,9 @@ ULIMIT             = 10000
 [server]
 PORT               = 7019
 ACCESS_TOKEN       = ${data:NAME}_7643543846_77ezBeUmRXhK
-MEMORY_FOR_QUERIES = 15G
-CACHE_MAX_SIZE     = 20G
-TIMEOUT            = 30s
+MEMORY_FOR_QUERIES = 40G
+CACHE_MAX_SIZE     = 80G
+TIMEOUT            = 60s
 
 [runtime]
 SYSTEM = native

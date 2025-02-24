@@ -17,6 +17,7 @@ FROM adfreiburg/qlever AS runtime-image
 WORKDIR /qlever
 
 COPY --from=build-stage /workspace/plazi-treatments.nq /qlever/treatments.nq
+COPY --from=build-stage /workspace/col.nt /qlever/col.nt
 ADD Qleverfile /qlever/Qleverfile
 
 RUN qlever index
