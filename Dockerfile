@@ -1,6 +1,5 @@
 FROM buildpack-deps:buster-curl AS build-stage 
 
-# Install raptor
 RUN apt-get update
 RUN DEBIAN_FRONTEND=noninteractive apt install -y git jq
 
