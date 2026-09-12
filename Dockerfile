@@ -1,7 +1,7 @@
-FROM buildpack-deps:buster-curl AS build-stage 
+FROM buildpack-deps:bookworm-curl AS build-stage
 
 RUN apt-get update
-RUN DEBIAN_FRONTEND=noninteractive apt install -y git jq
+RUN DEBIAN_FRONTEND=noninteractive apt-get install -y git jq
 
 # Add shell script and grant execution rights
 ADD prepare-rdf.sh /prepare-rdf.sh
