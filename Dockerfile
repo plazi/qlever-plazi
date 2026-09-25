@@ -18,9 +18,10 @@ WORKDIR /qlever
 COPY --from=build-stage /workspace/plazi-treatments.nq /qlever/treatments.nq
 COPY --from=build-stage /workspace/col.nt /qlever/col.nt
 ADD Qleverfile /qlever/Qleverfile
+COPY docker-entrypoint.sh /docker-entrypoint.sh
 
 RUN qlever index
 
-ENTRYPOINT [ "qlever" ]
+ENTRYPOINT [ "/docker-entrypoint.sh" ]
 CMD [ "start", "--description", "Plazi Treatments", "--run-in-foreground" ]
 
