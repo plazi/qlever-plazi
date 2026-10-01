@@ -127,25 +127,33 @@ go_live() {
   wait_for_health "$container" healthy || die "$container did not become healthy"
   ln -sfn "indexes/$name" "$QP_ROOT/current.new"
   mv -Tf "$QP_ROOT/current.new" "$QP_ROOT/current"
+  # From here on the new index is live: whatever fails below, the exit trap
+  # must not remove its container or directory.
+  CANDIDATE='' BUILD_DIR=''
+  log "live: $name"
   for old in $(docker ps -a --filter "label=$ROLE_LABEL=$ROLE" --format '{{.Names}}'); do
     [ "$old" = "$container" ] && continue
     log "draining $old"
     rm -f "$QP_ROOT/indexes/${old#"$QP_PREFIX"-}/.promoted"
     wait_for_health "$old" unhealthy || log "$old did not turn unhealthy, stopping it anyway"
     sleep "$QP_DRAIN_SECONDS"
-    docker stop "$old" > /dev/null
-    docker rm "$old" > /dev/null
+    { docker stop "$old" > /dev/null && docker rm "$old" > /dev/null; } ||
+      log "WARNING: could not remove $old, it no longer gets traffic; remove it by hand"
   done
-  # The server from before the move to this script, if it still runs
+  # The server from before the move to this script, if it still runs. It has
+  # no health check to drain with: stopping it drops queries running right then.
   if [ -n "$QP_LEGACY_CONTAINER" ] && [ "$(docker inspect -f '{{.State.Running}}' "$QP_LEGACY_CONTAINER" 2>/dev/null)" = true ]; then
     log "stopping legacy container $QP_LEGACY_CONTAINER"
-    docker stop "$QP_LEGACY_CONTAINER" > /dev/null
+    docker stop "$QP_LEGACY_CONTAINER" > /dev/null ||
+      log "WARNING: could not stop $QP_LEGACY_CONTAINER, it still serves the old index next to the new one"
   fi
-  log "live: $name"
 }
 
 ensure_status_server() {
-  docker inspect "$QP_PREFIX-status" > /dev/null 2>&1 && return
+  case $(docker inspect -f '{{.State.Running}}' "$QP_PREFIX-status" 2>/dev/null) in
+    true) return ;;
+    false) docker start "$QP_PREFIX-status" > /dev/null; return ;;
+  esac
   docker run -d --name "$QP_PREFIX-status" --restart unless-stopped \
     -v "$QP_ROOT/public":/usr/share/nginx/html:ro \
     --network "$QP_NETWORK" \
@@ -249,6 +257,15 @@ cmd_run() {
   curl -fsS "$NQ_URL" -o "$work/treatments.nq"
   log "treatments.nq: $(stat -c %s "$work/treatments.nq") bytes"
   verify_export "$work/treatments.nq"
+  # The export names the newest job completed when it started, which may be
+  # newer than the one gated on above if a job finished meanwhile; anything
+  # not among the recently completed jobs is a stale export.
+  if [ "$NQ_TILL" != "$till" ]; then
+    curl -fsS "$HOOKNQ/jobs.json?from=0&till=20" |
+      jq -e --arg t "$NQ_TILL" 'any(.[]; .status == "completed" and .job.till == $t)' > /dev/null ||
+      die "export is of till=$NQ_TILL, which is not among the recently completed hooknq jobs (latest: $till)"
+    log "export is of till=$NQ_TILL, completed after the gate read $till"
+  fi
   nq_treatments=$(grep -c -F '<http://plazi.org/vocab/treatment#Treatment> <' "$work/treatments.nq" || true)
   log "treatments in export: $nq_treatments"
 
@@ -273,6 +290,7 @@ cmd_run() {
       built_at: $built, till: $till, col_release: $col_release, col_version: $col_version,
       image: $image, treatments_in_export: ($n | tonumber)
     }' > "$work/stamp.json"
+  [ ! -e "$dir" ] || die "$dir exists already"
   mv "$work" "$dir"
   BUILD_DIR=$dir
 
@@ -288,10 +306,15 @@ cmd_run() {
     baseline=$(jq -r '.treatments // empty' "$live_stamp")
     log "live endpoint not answering, using the count of the live index stamp"
   fi
-  [ -n "$baseline" ] || die "no live treatment count to compare with (set QP_FORCE=1 for a first build without one)"
-  log "  treatments: $count, live: $baseline"
-  awk -v c="$count" -v b="$baseline" -v m="$QP_MIN_RATIO" 'BEGIN { exit !(c >= m * b) }' ||
-    die "new index has $count treatments, less than $QP_MIN_RATIO of the live $baseline"
+  if [ -n "$baseline" ]; then
+    log "  treatments: $count, live: $baseline"
+    awk -v c="$count" -v b="$baseline" -v m="$QP_MIN_RATIO" 'BEGIN { exit !(c >= m * b) }' ||
+      die "new index has $count treatments, less than $QP_MIN_RATIO of the live $baseline"
+  elif [ "$QP_FORCE" = 1 ]; then
+    log "  treatments: $count, no live count to compare with (first build, QP_FORCE=1)"
+  else
+    die "no live treatment count to compare with (set QP_FORCE=1 for a first build without one)"
+  fi
   col_marker=$(sparql_container "$CANDIDATE" "$COL_VERSION_QUERY" | first_value)
   log "  CoL marker: $col_marker"
   [ "$col_marker" = "$col_version" ] || die "CoL marker is '$col_marker', expected '$col_version'"
@@ -307,8 +330,6 @@ cmd_run() {
   mv -f "$dir/stamp.json.new" "$dir/stamp.json"
 
   go_live "$name"
-  CANDIDATE=
-  BUILD_DIR=
   RESULT=promoted MESSAGE="$name: $count treatments"
 
   # Keep the newest QP_KEEP indexes (and the live one in any case)
@@ -330,7 +351,6 @@ cmd_rollback() {
   CANDIDATE=$QP_PREFIX-$name
   wait_until_answering "$CANDIDATE" || die "server on $name did not start"
   go_live "$name"
-  CANDIDATE=
   RESULT=promoted MESSAGE="rollback to $name"
 }
 
@@ -353,7 +373,7 @@ finish() {
     docker rm -f "$CANDIDATE" > /dev/null 2>&1 || true
   fi
   if [ "$code" != 0 ]; then
-    RESULT=failed MESSAGE=$(grep -h 'FAILED: ' "$LOG" | tail -n 1 | sed 's/.*FAILED: //')
+    RESULT=failed MESSAGE=$(grep -h 'FAILED: ' "$LOG" | tail -n 1 | sed 's/.*FAILED: //' || true)
     MESSAGE=${MESSAGE:-exit code $code, see log}
     [ -n "${BUILD_DIR:-}" ] && rm -rf "$BUILD_DIR"
     log "the live index is unchanged"
@@ -375,7 +395,7 @@ main() {
   exec 9> "$QP_ROOT/.lock"
   flock -n 9 || { echo "another run is active" >&2; exit 1; }
 
-  RUN_ID=$(date -u +%Y-%m-%dT%H-%MZ)
+  RUN_ID=$(date -u +%Y-%m-%dT%H-%M-%SZ)
   LOG=$PUBLIC/logs/$RUN_ID.txt
   exec > >(tee -a "$LOG") 2>&1
   trap finish EXIT

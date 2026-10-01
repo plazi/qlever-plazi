@@ -11,7 +11,7 @@ The SPARQL endpoint https://qlever.ld.plazi.org/sparql serves Plazi's treatments
 
 ```
 /fastssd/qlever-plazi/
-  indexes/2026-09-25T02-14Z_8eab036_col-2026-08-26/   one directory per index, never modified once built
+  indexes/2026-09-25T02-14-03Z_8eab036_col-2026-08-26/   one directory per index, never modified once built
   current -> indexes/...                              the index being served
   public/status/                                      served at https://qlever.ld.plazi.org/status/
 ```
