@@ -45,7 +45,7 @@ fi
 
 echo "Building image ${IMAGE_NAME}:${TAG} from $REPO_DIR"
 cd "$REPO_DIR"
-docker build -t "${IMAGE_NAME}:${TAG}" .
+docker build --no-cache-filter build-stage -t "${IMAGE_NAME}:${TAG}" .
 
 echo "Pushing image ${IMAGE_NAME}:${TAG}"
 docker push "${IMAGE_NAME}:${TAG}"
