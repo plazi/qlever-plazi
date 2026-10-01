@@ -1,10 +1,11 @@
 # Qleverfile for Plazi, use with https://github.com/ad-freiburg/qlever-control
 #
 # Input: treatments.nq (N-Quads export of turtle-hook-nq, one named graph per
-# treatment) and col.nt (Catalogue of Life, default graph).
+# treatment) and col.nt (Catalogue of Life, default graph). The nightly build
+# (scripts/qlever-plazi.sh) copies this file into each index directory.
 #
-# The access token for privileged operations is NOT set here: this file ends
-# up in a public image. docker-entrypoint.sh generates a random one per start.
+# The access token for privileged operations is NOT set here: nothing needs
+# them, and the server gets a random token per start.
 
 [data]
 NAME              = plazi
