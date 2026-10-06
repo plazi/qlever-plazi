@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Builds, checks and serves the QLever index behind qlever.ld.plazi.org.
 #
-#   qlever-plazi.sh run            nightly (cron): build a new index if the data changed
+#   qlever-plazi.sh run            nightly (systemd timer): build a new index if the data changed
 #   qlever-plazi.sh rollback NAME  serve an earlier index again
 #   qlever-plazi.sh list           list the kept indexes
 #
@@ -17,7 +17,7 @@
 # container is stopped after that, so the endpoint keeps serving throughout.
 set -euo pipefail
 
-QP_ROOT=${QP_ROOT:-$HOME/qlever-plazi-data}
+QP_ROOT=${QP_ROOT:-/fastssd/qlever-plazi}
 QP_IMAGE=${QP_IMAGE:-adfreiburg/qlever:latest}
 QP_NETWORK=${QP_NETWORK:-vmi178314-config_default}
 QP_HOST=${QP_HOST:-qlever.ld.plazi.org}
@@ -134,7 +134,8 @@ go_live() {
   for old in $(docker ps -a --filter "label=$ROLE_LABEL=$ROLE" --format '{{.Names}}'); do
     [ "$old" = "$container" ] && continue
     log "draining $old"
-    rm -f "$QP_ROOT/indexes/${old#"$QP_PREFIX"-}/.promoted"
+    # Its index may live outside QP_ROOT (e.g. after QP_ROOT was moved)
+    rm -f "$(data_dir "$old")/.promoted"
     wait_for_health "$old" unhealthy || log "$old did not turn unhealthy, stopping it anyway"
     sleep "$QP_DRAIN_SECONDS"
     { docker stop "$old" > /dev/null && docker rm "$old" > /dev/null; } ||
@@ -149,7 +150,18 @@ go_live() {
   fi
 }
 
+# data_dir CONTAINER: the host directory mounted at the container's /data
+data_dir() {
+  docker inspect -f '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Source}}{{end}}{{end}}' "$1"
+}
+
 ensure_status_server() {
+  local source
+  source=$(docker inspect -f '{{range .Mounts}}{{.Source}}{{end}}' "$QP_PREFIX-status" 2>/dev/null || true)
+  if [ -n "$source" ] && [ "$source" != "$QP_ROOT/public" ]; then
+    log "status server serves $source, recreating it for $QP_ROOT/public"
+    docker rm -f "$QP_PREFIX-status" > /dev/null
+  fi
   case $(docker inspect -f '{{.State.Running}}' "$QP_PREFIX-status" 2>/dev/null) in
     true) return ;;
     false) docker start "$QP_PREFIX-status" > /dev/null; return ;;

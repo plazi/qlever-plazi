@@ -7,19 +7,32 @@ The SPARQL endpoint https://qlever.ld.plazi.org/sparql serves Plazi's treatments
 
 ## Nightly build
 
-`scripts/qlever-plazi.sh run` runs every night on the QLever host from the build user's crontab:
+`scripts/qlever-plazi.sh run` runs every night at 02:14 on the QLever host, as the system user `qlever-plazi`, from a systemd timer (`systemd/`). It uses the upstream `adfreiburg/qlever` image unchanged:
 
 ```
-14 2 * * * /home/reto/qlever-plazi/scripts/qlever-plazi.sh run >> /home/reto/qlever-plazi-cron.log 2>&1
-```
-
-It runs the script from that checkout, so keep the checkout on `main`. The script uses the upstream `adfreiburg/qlever` image unchanged, and keeps the indexes on the host, by default in `$HOME/qlever-plazi-data` (`QP_ROOT`):
-
-```
-~/qlever-plazi-data/
+/opt/qlever-plazi/                 this repository; each run first pulls main, so a merge deploys with the next run
+/fastssd/qlever-plazi/             the data (QP_ROOT)
   indexes/2026-09-25T02-14-03Z_8eab036_col-2026-08-26/   one directory per index, never modified once built
-  current -> indexes/...                              the index being served
-  public/status/                                      served at https://qlever.ld.plazi.org/status/
+  current -> indexes/...           the index being served
+  public/status/                   served at https://qlever.ld.plazi.org/status/
+```
+
+### Setup
+
+Once, as root, from a checkout of this repository:
+
+```bash
+sudo ./systemd/install.sh
+```
+
+It creates the user and both directories, clones the repository to `/opt/qlever-plazi`, installs and enables the timer, and runs the first build (about 30 minutes). It also takes over from the earlier setup, which ran from the crontab of `reto` with its data in `~reto/qlever-plazi-data`. The first build drains that server, and the old data is removed once nothing serves it any more. The script is safe to run again.
+
+The timer catches up on a run missed while the host was down (`Persistent=true`). Run logs go to the journal as well as to the status page:
+
+```bash
+systemctl list-timers qlever-plazi.timer   # last and next run
+systemctl start qlever-plazi               # run now
+journalctl -u qlever-plazi                 # logs
 ```
 
 A run takes these steps:
@@ -52,9 +65,9 @@ Every run writes these files under `https://qlever.ld.plazi.org/status/`:
 ### Operations
 
 ```bash
-scripts/qlever-plazi.sh list            # kept indexes, * = live
-scripts/qlever-plazi.sh rollback NAME   # serve an earlier index again (same zero-downtime switch)
-QP_FORCE=1 scripts/qlever-plazi.sh run  # build even if nothing changed
+sudo -u qlever-plazi /opt/qlever-plazi/scripts/qlever-plazi.sh list            # kept indexes, * = live
+sudo -u qlever-plazi /opt/qlever-plazi/scripts/qlever-plazi.sh rollback NAME   # serve an earlier index again
+sudo -u qlever-plazi env QP_FORCE=1 /opt/qlever-plazi/scripts/qlever-plazi.sh run  # build even if nothing changed
 ```
 
 The variables at the top of `scripts/qlever-plazi.sh` configure the paths, the Docker network, the Traefik router and the thresholds.
