@@ -30,7 +30,7 @@ NQ_URL=${NQ_URL:-$HOOKNQ/nquads}
 COL_REPO=${COL_REPO:-plazi/catologueoflife-to-rdf}
 LINDAS=${LINDAS:-https://lindas.admin.ch/query}
 LIVE_ENDPOINT=${LIVE_ENDPOINT:-https://$QP_HOST/sparql}
-CANARY_TREATMENT=${CANARY_TREATMENT:-http://treatment.plazi.org/id/03DC6055C158FFEB52E2CC860DA3FB8F}
+CANARY_TREATMENT=${CANARY_TREATMENT:-https://treatment.plazi.org/id/03DC6055C158FFEB52E2CC860DA3FB8F}
 # The compose-managed server from before this script; stopped at the first switch
 QP_LEGACY_CONTAINER=${QP_LEGACY_CONTAINER-vmi178314-config-qleverplazi-1}
 # Container name prefix and Traefik router name; change both for a test setup

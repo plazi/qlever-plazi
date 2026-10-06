@@ -33,7 +33,7 @@ A run takes these steps:
    - at least 98% of the treatments currently live (`QP_MIN_RATIO`);
    - the CoL `owl:versionInfo` equals the version in the downloaded `col.nt`;
    - the kingdoms canary (`SELECT DISTINCT ?kingdom { ?taxon dwc:kingdom ?kingdom }`) returns `Plantae`;
-   - `<http://treatment.plazi.org/id/03DC6055C158FFEB52E2CC860DA3FB8F>` has triples.
+   - `<https://treatment.plazi.org/id/03DC6055C158FFEB52E2CC860DA3FB8F>` has triples (Plazi IRIs are `https://` since plazi/gg2rdf#33).
 
    If any check fails, the run fails and the live index keeps serving.
 5. **Go live.** Once the checks pass, the new server's Docker health check turns healthy and Traefik starts routing to it. Then the `current` symlink is swapped atomically (`ln -sfn … current.new && mv -Tf current.new current`) and the previous server is stopped. The endpoint keeps serving throughout.
