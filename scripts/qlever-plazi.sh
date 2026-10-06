@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Builds, checks and serves the QLever index behind qlever.ld.plazi.org.
 #
-#   qlever-plazi.sh run            nightly: build a new index if the data changed
+#   qlever-plazi.sh run            nightly (cron): build a new index if the data changed
 #   qlever-plazi.sh rollback NAME  serve an earlier index again
 #   qlever-plazi.sh list           list the kept indexes
 #
@@ -17,7 +17,7 @@
 # container is stopped after that, so the endpoint keeps serving throughout.
 set -euo pipefail
 
-QP_ROOT=${QP_ROOT:-/fastssd/qlever-plazi}
+QP_ROOT=${QP_ROOT:-$HOME/qlever-plazi-data}
 QP_IMAGE=${QP_IMAGE:-adfreiburg/qlever:latest}
 QP_NETWORK=${QP_NETWORK:-vmi178314-config_default}
 QP_HOST=${QP_HOST:-qlever.ld.plazi.org}

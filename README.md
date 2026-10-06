@@ -7,10 +7,16 @@ The SPARQL endpoint https://qlever.ld.plazi.org/sparql serves Plazi's treatments
 
 ## Nightly build
 
-`scripts/qlever-plazi.sh run` runs every night on the QLever host, triggered by `.forgejo/workflows/nightly.yml`. It uses the upstream `adfreiburg/qlever` image unchanged, and keeps the indexes on the host:
+`scripts/qlever-plazi.sh run` runs every night on the QLever host from the build user's crontab:
 
 ```
-/fastssd/qlever-plazi/
+14 2 * * * /home/reto/qlever-plazi/scripts/qlever-plazi.sh run >> /home/reto/qlever-plazi-cron.log 2>&1
+```
+
+It runs the script from that checkout, so keep the checkout on `main`. The script uses the upstream `adfreiburg/qlever` image unchanged, and keeps the indexes on the host, by default in `$HOME/qlever-plazi-data` (`QP_ROOT`):
+
+```
+~/qlever-plazi-data/
   indexes/2026-09-25T02-14-03Z_8eab036_col-2026-08-26/   one directory per index, never modified once built
   current -> indexes/...                              the index being served
   public/status/                                      served at https://qlever.ld.plazi.org/status/
