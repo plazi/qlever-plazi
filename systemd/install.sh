@@ -12,16 +12,28 @@ CODE=/opt/qlever-plazi
 DATA=/fastssd/qlever-plazi
 REPO_URL=https://github.com/plazi/qlever-plazi.git
 OLD_USER=${OLD_USER:-reto}
-OLD_DATA=$(getent passwd "$OLD_USER" | cut -d: -f6)/qlever-plazi-data
 
 [ "$(id -u)" = 0 ] || { echo "run as root: sudo $0" >&2; exit 1; }
 step() { echo; echo "== $*"; }
 
+# The earlier setup's data, which is chowned and later removed: only ever a
+# qlever-plazi-data directory inside an existing home directory
+old_home=$(getent passwd "$OLD_USER" | cut -d: -f6) || { echo "no user $OLD_USER (set OLD_USER)" >&2; exit 1; }
+case $old_home in
+  "" | / ) echo "$OLD_USER has no usable home directory ('$old_home')" >&2; exit 1 ;;
+esac
+[ -d "$old_home" ] || { echo "home directory $old_home of $OLD_USER does not exist" >&2; exit 1; }
+OLD_DATA=$old_home/qlever-plazi-data
+
 step "service user $SERVICE_USER"
 if ! id "$SERVICE_USER" > /dev/null 2>&1; then
-  useradd --system --create-home --home-dir "/var/lib/$SERVICE_USER" \
-    --shell /usr/sbin/nologin --groups docker "$SERVICE_USER"
+  useradd --system --user-group --create-home --home-dir "/var/lib/$SERVICE_USER" \
+    --shell /usr/sbin/nologin "$SERVICE_USER"
 fi
+# Also when the user existed already: the unit runs with this group, and the
+# build needs Docker
+getent group "$SERVICE_USER" > /dev/null || groupadd --system "$SERVICE_USER"
+usermod -g "$SERVICE_USER" -aG docker "$SERVICE_USER"
 id "$SERVICE_USER"
 
 step "data in $DATA"
@@ -43,7 +55,8 @@ systemctl enable --now qlever-plazi.timer
 
 step "taking over from $OLD_USER"
 if crontab -u "$OLD_USER" -l 2> /dev/null | grep -q 'qlever-plazi'; then
-  crontab -u "$OLD_USER" -l | grep -v 'qlever-plazi' | crontab -u "$OLD_USER" -
+  # grep -v exits 1 when no other line is left
+  crontab -u "$OLD_USER" -l | { grep -v 'qlever-plazi' || true; } | crontab -u "$OLD_USER" -
   echo "removed the qlever-plazi line from the crontab of $OLD_USER"
 fi
 if [ -d "$OLD_DATA" ]; then

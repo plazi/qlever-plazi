@@ -4,6 +4,8 @@ Documentation=https://github.com/plazi/qlever-plazi
 After=docker.service network-online.target
 Requires=docker.service
 Wants=network-online.target
+# The data lives on /fastssd; never build into an unmounted mount point
+RequiresMountsFor=/fastssd/qlever-plazi
 
 [Service]
 Type=oneshot
