@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Builds, checks and serves the QLever index behind qlever.ld.plazi.org.
 #
-#   qlever-plazi.sh run            nightly: build a new index if the data changed
+#   qlever-plazi.sh run            nightly (systemd timer): build a new index if the data changed
 #   qlever-plazi.sh rollback NAME  serve an earlier index again
 #   qlever-plazi.sh list           list the kept indexes
 #
@@ -30,7 +30,7 @@ NQ_URL=${NQ_URL:-$HOOKNQ/nquads}
 COL_REPO=${COL_REPO:-plazi/catologueoflife-to-rdf}
 LINDAS=${LINDAS:-https://lindas.admin.ch/query}
 LIVE_ENDPOINT=${LIVE_ENDPOINT:-https://$QP_HOST/sparql}
-CANARY_TREATMENT=${CANARY_TREATMENT:-http://treatment.plazi.org/id/03DC6055C158FFEB52E2CC860DA3FB8F}
+CANARY_TREATMENT=${CANARY_TREATMENT:-https://treatment.plazi.org/id/03DC6055C158FFEB52E2CC860DA3FB8F}
 # The compose-managed server from before this script; stopped at the first switch
 QP_LEGACY_CONTAINER=${QP_LEGACY_CONTAINER-vmi178314-config-qleverplazi-1}
 # Container name prefix and Traefik router name; change both for a test setup
@@ -134,7 +134,8 @@ go_live() {
   for old in $(docker ps -a --filter "label=$ROLE_LABEL=$ROLE" --format '{{.Names}}'); do
     [ "$old" = "$container" ] && continue
     log "draining $old"
-    rm -f "$QP_ROOT/indexes/${old#"$QP_PREFIX"-}/.promoted"
+    # Its index may live outside QP_ROOT (e.g. after QP_ROOT was moved)
+    rm -f "$(data_dir "$old")/.promoted"
     wait_for_health "$old" unhealthy || log "$old did not turn unhealthy, stopping it anyway"
     sleep "$QP_DRAIN_SECONDS"
     { docker stop "$old" > /dev/null && docker rm "$old" > /dev/null; } ||
@@ -149,7 +150,18 @@ go_live() {
   fi
 }
 
+# data_dir CONTAINER: the host directory mounted at the container's /data
+data_dir() {
+  docker inspect -f '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Source}}{{end}}{{end}}' "$1"
+}
+
 ensure_status_server() {
+  local source
+  source=$(docker inspect -f '{{range .Mounts}}{{.Source}}{{end}}' "$QP_PREFIX-status" 2>/dev/null || true)
+  if [ -n "$source" ] && [ "$source" != "$QP_ROOT/public" ]; then
+    log "status server serves $source, recreating it for $QP_ROOT/public"
+    docker rm -f "$QP_PREFIX-status" > /dev/null
+  fi
   case $(docker inspect -f '{{.State.Running}}' "$QP_PREFIX-status" 2>/dev/null) in
     true) return ;;
     false) docker start "$QP_PREFIX-status" > /dev/null; return ;;

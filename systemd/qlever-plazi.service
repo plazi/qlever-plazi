@@ -1,0 +1,18 @@
+[Unit]
+Description=Build, check and serve the QLever index of qlever.ld.plazi.org
+Documentation=https://github.com/plazi/qlever-plazi
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+# The data lives on /fastssd; never build into an unmounted mount point
+RequiresMountsFor=/fastssd/qlever-plazi
+
+[Service]
+Type=oneshot
+User=qlever-plazi
+Group=qlever-plazi
+Environment=QP_ROOT=/fastssd/qlever-plazi
+# Deploy what was merged to main; a failed pull (e.g. GitHub down) builds with the current code
+ExecStartPre=-/usr/bin/git -C /opt/qlever-plazi pull --ff-only --quiet
+ExecStart=/opt/qlever-plazi/scripts/qlever-plazi.sh run
+TimeoutStartSec=4h

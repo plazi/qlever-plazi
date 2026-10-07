@@ -7,13 +7,32 @@ The SPARQL endpoint https://qlever.ld.plazi.org/sparql serves Plazi's treatments
 
 ## Nightly build
 
-`scripts/qlever-plazi.sh run` runs every night on the QLever host, triggered by `.forgejo/workflows/nightly.yml`. It uses the upstream `adfreiburg/qlever` image unchanged, and keeps the indexes on the host:
+`scripts/qlever-plazi.sh run` runs every night at 02:14 on the QLever host, as the system user `qlever-plazi`, from a systemd timer (`systemd/`). It uses the upstream `adfreiburg/qlever` image unchanged:
 
 ```
-/fastssd/qlever-plazi/
+/opt/qlever-plazi/                 this repository; each run first pulls main, so a merge deploys with the next run
+/fastssd/qlever-plazi/             the data (QP_ROOT)
   indexes/2026-09-25T02-14-03Z_8eab036_col-2026-08-26/   one directory per index, never modified once built
-  current -> indexes/...                              the index being served
-  public/status/                                      served at https://qlever.ld.plazi.org/status/
+  current -> indexes/...           the index being served
+  public/status/                   served at https://qlever.ld.plazi.org/status/
+```
+
+### Setup
+
+Once, as root, from a checkout of this repository:
+
+```bash
+sudo ./systemd/install.sh
+```
+
+It creates the user and both directories, clones the repository to `/opt/qlever-plazi`, installs and enables the timer, and runs the first build (about 30 minutes). It also takes over from the earlier setup, which ran from the crontab of `reto` with its data in `~reto/qlever-plazi-data`. The first build drains that server, and the old data is removed once nothing serves it any more. The script is safe to run again.
+
+The timer catches up on a run missed while the host was down (`Persistent=true`). Run logs go to the journal as well as to the status page:
+
+```bash
+systemctl list-timers qlever-plazi.timer   # last and next run
+systemctl start qlever-plazi               # run now
+journalctl -u qlever-plazi                 # logs
 ```
 
 A run takes these steps:
@@ -27,7 +46,7 @@ A run takes these steps:
    - at least 98% of the treatments currently live (`QP_MIN_RATIO`);
    - the CoL `owl:versionInfo` equals the version in the downloaded `col.nt`;
    - the kingdoms canary (`SELECT DISTINCT ?kingdom { ?taxon dwc:kingdom ?kingdom }`) returns `Plantae`;
-   - `<http://treatment.plazi.org/id/03DC6055C158FFEB52E2CC860DA3FB8F>` has triples.
+   - `<https://treatment.plazi.org/id/03DC6055C158FFEB52E2CC860DA3FB8F>` has triples (Plazi IRIs are `https://` since plazi/gg2rdf#33).
 
    If any check fails, the run fails and the live index keeps serving.
 5. **Go live.** Once the checks pass, the new server's Docker health check turns healthy and Traefik starts routing to it. Then the `current` symlink is swapped atomically (`ln -sfn … current.new && mv -Tf current.new current`) and the previous server is stopped. The endpoint keeps serving throughout.
@@ -46,9 +65,9 @@ Every run writes these files under `https://qlever.ld.plazi.org/status/`:
 ### Operations
 
 ```bash
-scripts/qlever-plazi.sh list            # kept indexes, * = live
-scripts/qlever-plazi.sh rollback NAME   # serve an earlier index again (same zero-downtime switch)
-QP_FORCE=1 scripts/qlever-plazi.sh run  # build even if nothing changed
+sudo -u qlever-plazi /opt/qlever-plazi/scripts/qlever-plazi.sh list            # kept indexes, * = live
+sudo -u qlever-plazi /opt/qlever-plazi/scripts/qlever-plazi.sh rollback NAME   # serve an earlier index again
+sudo -u qlever-plazi env QP_FORCE=1 /opt/qlever-plazi/scripts/qlever-plazi.sh run  # build even if nothing changed
 ```
 
 The variables at the top of `scripts/qlever-plazi.sh` configure the paths, the Docker network, the Traefik router and the thresholds.
