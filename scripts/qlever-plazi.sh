@@ -21,7 +21,10 @@ QP_ROOT=${QP_ROOT:-/fastssd/qlever-plazi}
 QP_IMAGE=${QP_IMAGE:-adfreiburg/qlever:latest}
 QP_NETWORK=${QP_NETWORK:-vmi178314-config_default}
 QP_HOST=${QP_HOST:-qlever.ld.plazi.org}
-QP_KEEP=${QP_KEEP:-5}
+QP_KEEP=${QP_KEEP:-3}
+# A build needs about 35 GB while it runs (export, CoL, index); QP_ROOT shares
+# its disk with other services, so don't start one with less space than this
+QP_MIN_FREE_GB=${QP_MIN_FREE_GB:-50}
 QP_MIN_RATIO=${QP_MIN_RATIO:-0.98}
 QP_FORCE=${QP_FORCE:-0}
 QP_DRAIN_SECONDS=${QP_DRAIN_SECONDS:-30}
@@ -217,8 +220,7 @@ write_status() {
       checked_at: $checked, run: $run, result: $result, message: $message,
       log: "logs/\($run).txt", healthy: $healthy,
       treatments: { live: ($live | tonumber? // null), lindas: ($lindas | tonumber? // null), ratio: $ratio },
-      index: $index,
-      index_age_hours: (if $index.built_at then ((now - ($index.built_at | fromdateiso8601)) / 3600 | floor) else null end)
+      index: $index
     }' > "$PUBLIC/status.json.new"
   mv -f "$PUBLIC/status.json.new" "$PUBLIC/status.json"
   if [ "$healthy" = true ]; then echo ok > "$PUBLIC/health"; else rm -f "$PUBLIC/health"; fi
@@ -259,6 +261,12 @@ cmd_run() {
     RESULT=skipped MESSAGE="no change"
     return
   fi
+
+  local free_gb
+  free_gb=$(df --output=avail -BG "$QP_ROOT" | tail -n 1 | tr -dc 0-9)
+  [ "$free_gb" -ge "$QP_MIN_FREE_GB" ] ||
+    die "only ${free_gb} GB free on the disk of $QP_ROOT, a build needs at least $QP_MIN_FREE_GB (QP_MIN_FREE_GB)"
+  log "${free_gb} GB free on the disk of $QP_ROOT"
 
   work=$QP_ROOT/indexes/.build-$RUN_ID
   BUILD_DIR=$work

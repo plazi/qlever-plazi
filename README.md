@@ -38,19 +38,20 @@ journalctl -u qlever-plazi                 # logs
 A run takes these steps:
 
 1. **Gate.** It reads the `till` of the newest completed job from `hooknq.ld.plazi.org/jobs.json?from=0&till=2` and the latest CoL release tag. If both match `current/stamp.json`, it logs `skipped — no change` and stops.
-2. **Download and verify.** The treatments export has to end with `# END till=<commit> lines=<n> sha256=<hex>`, and the line count and hash of everything before that line have to match. Otherwise the run stops before indexing.
+2. **Disk space.** The build needs about 35 GB while it runs, and `/fastssd` is shared with other services. With less than 50 GB free (`QP_MIN_FREE_GB`), the run fails before downloading anything.
+3. **Download and verify.** The treatments export has to end with `# END till=<commit> lines=<n> sha256=<hex>`, and the line count and hash of everything before that line have to match. Otherwise the run stops before indexing.
 
    This check is essential. The HTTP status is sent before the export runs, so a truncated export still arrives as a successful 200. Between 2026-09-13 and 2026-09-25 that is how the endpoint ended up serving 318k of 891k treatments: the export was cut off after 2^24 triples.
-3. **Index** into a new directory named after the build time, the hooknq commit and the CoL version.
-4. **Check.** The run starts a server on the new index, not yet reachable from outside, and requires all of these:
+4. **Index** into a new directory named after the build time, the hooknq commit and the CoL version.
+5. **Check.** The run starts a server on the new index, not yet reachable from outside, and requires all of these:
    - at least 98% of the treatments currently live (`QP_MIN_RATIO`);
    - the CoL `owl:versionInfo` equals the version in the downloaded `col.nt`;
    - the kingdoms canary (`SELECT DISTINCT ?kingdom { ?taxon dwc:kingdom ?kingdom }`) returns `Plantae`;
    - `<https://treatment.plazi.org/id/03DC6055C158FFEB52E2CC860DA3FB8F>` has triples (Plazi IRIs are `https://` since plazi/gg2rdf#33).
 
    If any check fails, the run fails and the live index keeps serving.
-5. **Go live.** Once the checks pass, the new server's Docker health check turns healthy and Traefik starts routing to it. Then the `current` symlink is swapped atomically (`ln -sfn … current.new && mv -Tf current.new current`) and the previous server is stopped. The endpoint keeps serving throughout.
-6. **Prune.** The five newest indexes are kept for rollback, plus the live one in any case.
+6. **Go live.** Once the checks pass, the new server's Docker health check turns healthy and Traefik starts routing to it. Then the `current` symlink is swapped atomically (`ln -sfn … current.new && mv -Tf current.new current`) and the previous server is stopped. The endpoint keeps serving throughout.
+7. **Prune.** The three newest indexes are kept for rollback (`QP_KEEP`), plus the live one in any case.
 
 Every run writes these files under `https://qlever.ld.plazi.org/status/`:
 
@@ -58,8 +59,8 @@ Every run writes these files under `https://qlever.ld.plazi.org/status/`:
 |---|---|
 | `logs/<run>.txt` | the full log of the run |
 | `runs.json` | recent runs, newest first |
-| `status.json` | the live index stamp, its age, and its treatment count next to LINDAS |
-| `status.svg` | a badge showing the treatment count, the percentage of LINDAS and the index age |
+| `status.json` | the live index stamp (with `built_at`) and its treatment count next to LINDAS |
+| `status.svg` | a badge showing the treatment count, the percentage of LINDAS and the build date |
 | `health` | present (HTTP 200) only if the last run did not fail and the live count is at least 98% of LINDAS; otherwise 404. Monitor this file, e.g. from Upptime. |
 
 ### Operations
