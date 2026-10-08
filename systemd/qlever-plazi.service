@@ -4,14 +4,13 @@ Documentation=https://github.com/plazi/qlever-plazi
 After=docker.service network-online.target
 Requires=docker.service
 Wants=network-online.target
-# The data lives on /fastssd; never build into an unmounted mount point
-RequiresMountsFor=/fastssd/qlever-plazi
+# install.sh adds RequiresMountsFor=<QP_ROOT> in qlever-plazi.service.d/
 
 [Service]
 Type=oneshot
 User=qlever-plazi
 Group=qlever-plazi
-Environment=QP_ROOT=/fastssd/qlever-plazi
+# Host settings: /etc/qlever-plazi.env, read by the script itself
 # Deploy what was merged to main; a failed pull (e.g. GitHub down) builds with the current code
 ExecStartPre=-/usr/bin/git -C /opt/qlever-plazi pull --ff-only --quiet
 ExecStart=/opt/qlever-plazi/scripts/qlever-plazi.sh run

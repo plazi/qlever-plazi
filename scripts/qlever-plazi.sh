@@ -15,12 +15,31 @@
 # A new index only goes live after its checks pass. It is served by a new
 # container that Traefik routes to only once it is healthy; the previous
 # container is stopped after that, so the endpoint keeps serving throughout.
+#
+# Settings of the host (data directory, Docker network of Traefik, ...) are
+# read from $QP_CONFIG, see qlever-plazi.env.example. Variables already set in
+# the environment take precedence over the file.
 set -euo pipefail
 
-QP_ROOT=${QP_ROOT:-/fastssd/qlever-plazi}
-QP_IMAGE=${QP_IMAGE:-adfreiburg/qlever:latest}
-QP_NETWORK=${QP_NETWORK:-vmi178314-config_default}
+QP_CONFIG=${QP_CONFIG:-/etc/qlever-plazi.env}
+if [ -f "$QP_CONFIG" ]; then
+  while IFS= read -r line || [ -n "$line" ]; do
+    case $line in "" | "#"*) continue ;; esac
+    key=${line%%=*}
+    [[ $key =~ ^[A-Z_][A-Z0-9_]*$ ]] || { echo "$QP_CONFIG: not KEY=value: $line" >&2; exit 2; }
+    value=${line#*=}
+    [[ $value =~ ^\"(.*)\"$ || $value =~ ^\'(.*)\'$ ]] && value=${BASH_REMATCH[1]}
+    [ -n "${!key+set}" ] || declare -x "$key=$value"
+  done < "$QP_CONFIG"
+fi
+
+# Host settings
+QP_ROOT=${QP_ROOT:-/var/lib/qlever-plazi}
+QP_NETWORK=${QP_NETWORK:-}             # Docker network Traefik reaches the containers on
+QP_ENTRYPOINT=${QP_ENTRYPOINT:-websecure}
+QP_CERTRESOLVER=${QP_CERTRESOLVER:-}   # empty: Traefik's default certificate
 QP_HOST=${QP_HOST:-qlever.ld.plazi.org}
+QP_IMAGE=${QP_IMAGE:-adfreiburg/qlever:latest}
 QP_KEEP=${QP_KEEP:-3}
 # A build needs about 35 GB while it runs (export, CoL, index); QP_ROOT shares
 # its disk with other services, so don't start one with less space than this
@@ -34,12 +53,9 @@ COL_REPO=${COL_REPO:-plazi/catologueoflife-to-rdf}
 LINDAS=${LINDAS:-https://lindas.admin.ch/query}
 LIVE_ENDPOINT=${LIVE_ENDPOINT:-https://$QP_HOST/sparql}
 CANARY_TREATMENT=${CANARY_TREATMENT:-https://treatment.plazi.org/id/03DC6055C158FFEB52E2CC860DA3FB8F}
-# The compose-managed server from before this script; stopped at the first switch
-QP_LEGACY_CONTAINER=${QP_LEGACY_CONTAINER-vmi178314-config-qleverplazi-1}
 # Container name prefix and Traefik router name; change both for a test setup
 QP_PREFIX=${QP_PREFIX:-qlever-plazi}
 QP_ROUTER=${QP_ROUTER:-qleverplazi}
-QP_CERTRESOLVER=${QP_CERTRESOLVER-leresolver}
 
 REPO_DIR=$(cd "$(dirname "$0")/.." && pwd)
 PUBLIC=$QP_ROOT/public/status
@@ -87,7 +103,7 @@ start_server() {
     --label "org.plazi.qlever.index=$(basename "$dir")" \
     --label "traefik.enable=true" \
     --label "traefik.http.routers.$QP_ROUTER.rule=Host(\`$QP_HOST\`)" \
-    --label "traefik.http.routers.$QP_ROUTER.entrypoints=websecure" \
+    --label "traefik.http.routers.$QP_ROUTER.entrypoints=$QP_ENTRYPOINT" \
     --label "traefik.http.routers.$QP_ROUTER.tls=true" \
     ${QP_CERTRESOLVER:+--label "traefik.http.routers.$QP_ROUTER.tls.certresolver=$QP_CERTRESOLVER"} \
     --label "traefik.http.services.$QP_ROUTER.loadbalancer.server.port=7019" \
@@ -144,13 +160,6 @@ go_live() {
     { docker stop "$old" > /dev/null && docker rm "$old" > /dev/null; } ||
       log "WARNING: could not remove $old, it no longer gets traffic; remove it by hand"
   done
-  # The server from before the move to this script, if it still runs. It has
-  # no health check to drain with: stopping it drops queries running right then.
-  if [ -n "$QP_LEGACY_CONTAINER" ] && [ "$(docker inspect -f '{{.State.Running}}' "$QP_LEGACY_CONTAINER" 2>/dev/null)" = true ]; then
-    log "stopping legacy container $QP_LEGACY_CONTAINER"
-    docker stop "$QP_LEGACY_CONTAINER" > /dev/null ||
-      log "WARNING: could not stop $QP_LEGACY_CONTAINER, it still serves the old index next to the new one"
-  fi
 }
 
 # data_dir CONTAINER: the host directory mounted at the container's /data
@@ -174,7 +183,7 @@ ensure_status_server() {
     --network "$QP_NETWORK" \
     --label "traefik.enable=true" \
     --label "traefik.http.routers.$QP_ROUTER-status.rule=Host(\`$QP_HOST\`) && PathPrefix(\`/status\`)" \
-    --label "traefik.http.routers.$QP_ROUTER-status.entrypoints=websecure" \
+    --label "traefik.http.routers.$QP_ROUTER-status.entrypoints=$QP_ENTRYPOINT" \
     --label "traefik.http.routers.$QP_ROUTER-status.tls=true" \
     ${QP_CERTRESOLVER:+--label "traefik.http.routers.$QP_ROUTER-status.tls.certresolver=$QP_CERTRESOLVER"} \
     --label "traefik.http.services.$QP_ROUTER-status.loadbalancer.server.port=80" \
@@ -411,6 +420,7 @@ main() {
     *) echo "usage: $0 run | rollback NAME | list" >&2; exit 2 ;;
   esac
 
+  [ -n "$QP_NETWORK" ] || { echo "QP_NETWORK is not set (in $QP_CONFIG): the Docker network Traefik uses" >&2; exit 2; }
   mkdir -p "$QP_ROOT/indexes" "$PUBLIC/logs"
   exec 9> "$QP_ROOT/.lock"
   flock -n 9 || { echo "another run is active" >&2; exit 1; }
