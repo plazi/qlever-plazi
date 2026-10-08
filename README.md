@@ -30,7 +30,7 @@ sudo nano /etc/qlever-plazi.env   # QP_ROOT, and QP_NETWORK, QP_ENTRYPOINT, QP_C
 sudo ./systemd/install.sh   # sets everything up and runs the first build (about 30 minutes)
 ```
 
-The second call creates the system user and `QP_ROOT`, clones this repository to `/opt/qlever-plazi`, installs and enables the timer (with a dependency on the mount of `QP_ROOT`), and runs the first build. It is safe to run again, e.g. after changing the units in `systemd/`.
+The second call refuses to continue while another deployment still serves `QP_HOST` (a running container routed by Traefik to that host, or a crontab that runs `qlever-plazi.sh`), because the switch only stops containers of this setup. Otherwise it creates the system user and `QP_ROOT`, clones this repository to `/opt/qlever-plazi`, installs and enables the timer (with a dependency on the mount of `QP_ROOT`), and runs the first build. It is safe to run again, e.g. after changing the units in `systemd/`.
 
 The host settings are read by the script itself, so the operations below use them too. Variables set in the environment take precedence over the file.
 
