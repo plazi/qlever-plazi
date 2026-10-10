@@ -4,6 +4,7 @@
 #   qlever-plazi.sh run            nightly (systemd timer): build a new index if the data changed
 #   qlever-plazi.sh rollback NAME  serve an earlier index again
 #   qlever-plazi.sh list           list the kept indexes
+#   qlever-plazi.sh settings       check and print the host settings in effect
 #
 # The upstream adfreiburg/qlever image is used unchanged; indexes live on the
 # host and are never modified once built:
@@ -18,26 +19,52 @@
 #
 # Settings of the host (data directory, Docker network of Traefik, ...) are
 # read from $QP_CONFIG, see qlever-plazi.env.example. Variables already set in
-# the environment take precedence over the file.
+# the environment take precedence over the file. A run with a broken settings
+# file fails like a failed check, so that the status shows it.
 set -euo pipefail
 
 QP_CONFIG=${QP_CONFIG:-/etc/qlever-plazi.env}
-if [ -f "$QP_CONFIG" ]; then
+# All settings, defined below; a typo in the file is an error, not ignored
+SETTINGS=(QP_ROOT QP_NETWORK QP_ENTRYPOINT QP_CERTRESOLVER QP_HOST QP_IMAGE QP_KEEP QP_MIN_FREE_GB
+  QP_MIN_RATIO QP_FORCE QP_DRAIN_SECONDS HOOKNQ NQ_URL COL_REPO LINDAS LIVE_ENDPOINT CANARY_TREATMENT
+  QP_PREFIX QP_ROUTER)
+# The first problem with the file, reported by main; the lines after it still
+# count. Only the line number, as the message ends up in the public status.
+CONFIG_ERROR=''
+config_error() { CONFIG_ERROR=${CONFIG_ERROR:-"$QP_CONFIG line $config_line: $1"}; }
+declare -A config_keys=()
+if [ -f "$QP_CONFIG" ] && [ -r "$QP_CONFIG" ]; then
+  config_line=0
   while IFS= read -r line || [ -n "$line" ]; do
+    config_line=$((config_line + 1))
+    # without a byte order mark and surrounding whitespace, which includes the
+    # \r of CRLF line ends
+    line=${line#$'\xef\xbb\xbf'}
+    line=${line%"${line##*[![:space:]]}"}
+    line=${line#"${line%%[![:space:]]*}"}
     case $line in "" | "#"*) continue ;; esac
-    key=${line%%=*}
-    [[ $key =~ ^[A-Z_][A-Z0-9_]*$ ]] || { echo "$QP_CONFIG: not KEY=value: $line" >&2; exit 2; }
-    value=${line#*=}
-    [[ $value =~ ^\"(.*)\"$ || $value =~ ^\'(.*)\'$ ]] && value=${BASH_REMATCH[1]}
+    [[ $line =~ ^([A-Z_][A-Z0-9_]*)=(.*)$ ]] || { config_error "not KEY=value"; continue; }
+    key=${BASH_REMATCH[1]} value=${BASH_REMATCH[2]}
+    [[ " ${SETTINGS[*]} " == *" $key "* ]] || { config_error "no setting $key"; continue; }
+    [ -z "${config_keys[$key]:-}" ] || { config_error "$key is set again"; continue; }
+    config_keys[$key]=1
+    if [[ $value =~ ^\"(.*)\"$ || $value =~ ^\'(.*)\'$ ]]; then
+      value=${BASH_REMATCH[1]}
+    elif [[ $value == *[[:space:]]* ]]; then
+      # e.g. a comment after the value
+      config_error "the value of $key has a space but no quotes"; continue
+    fi
     [ -n "${!key+set}" ] || declare -x "$key=$value"
   done < "$QP_CONFIG"
+elif [ -e "$QP_CONFIG" ]; then
+  CONFIG_ERROR="cannot read $QP_CONFIG"
 fi
 
 # Host settings
 QP_ROOT=${QP_ROOT:-/var/lib/qlever-plazi}
 QP_NETWORK=${QP_NETWORK:-}             # Docker network Traefik reaches the containers on
 QP_ENTRYPOINT=${QP_ENTRYPOINT:-websecure}
-QP_CERTRESOLVER=${QP_CERTRESOLVER:-}   # empty: Traefik's default certificate
+QP_CERTRESOLVER=${QP_CERTRESOLVER-leresolver}   # set it empty for Traefik's default certificate
 QP_HOST=${QP_HOST:-qlever.ld.plazi.org}
 QP_IMAGE=${QP_IMAGE:-adfreiburg/qlever:latest}
 QP_KEEP=${QP_KEEP:-3}
@@ -229,7 +256,8 @@ write_status() {
       checked_at: $checked, run: $run, result: $result, message: $message,
       log: "logs/\($run).txt", healthy: $healthy,
       treatments: { live: ($live | tonumber? // null), lindas: ($lindas | tonumber? // null), ratio: $ratio },
-      index: $index
+      index: $index,
+      index_age_hours: (try ((now - ($index.built_at | fromdateiso8601)) / 3600 | floor) catch null)
     }' > "$PUBLIC/status.json.new"
   mv -f "$PUBLIC/status.json.new" "$PUBLIC/status.json"
   if [ "$healthy" = true ]; then echo ok > "$PUBLIC/health"; else rm -f "$PUBLIC/health"; fi
@@ -241,6 +269,24 @@ write_status() {
   } | head -n 200 | jq -s . > "$PUBLIC/runs.json.new"
   mv -f "$PUBLIC/runs.json.new" "$PUBLIC/runs.json"
   ls -1t "$PUBLIC/logs"/*.txt 2>/dev/null | tail -n +201 | xargs -r rm -f
+}
+
+# --- indexes ----------------------------------------------------------------
+
+# prune: keeps the newest QP_KEEP indexes (and the live one in any case), and
+# removes the build directories of runs that were killed before their cleanup
+prune() {
+  local old
+  for old in "$QP_ROOT"/indexes/.build-*/; do
+    [ -d "$old" ] || continue
+    log "removing $(basename "$old"), left by an interrupted run"
+    rm -rf "${old%/}"
+  done
+  ls -1 "$QP_ROOT/indexes" | { grep -v '^\.' || true; } | sort -r | tail -n +"$((QP_KEEP + 1))" | while read -r old; do
+    [ "$QP_ROOT/indexes/$old" -ef "$QP_ROOT/current" ] && continue
+    log "removing old index $old"
+    rm -rf "${QP_ROOT:?}/indexes/$old"
+  done
 }
 
 # --- commands ---------------------------------------------------------------
@@ -271,8 +317,11 @@ cmd_run() {
     return
   fi
 
+  # Whatever is due to go goes first, so that it counts as free
+  prune
   local free_gb
-  free_gb=$(df --output=avail -BG "$QP_ROOT" | tail -n 1 | tr -dc 0-9)
+  free_gb=$(df --output=avail -BG "$QP_ROOT" | tail -n 1 | tr -dc 0-9 || true)
+  [ -n "$free_gb" ] || die "cannot tell the free space on the disk of $QP_ROOT"
   [ "$free_gb" -ge "$QP_MIN_FREE_GB" ] ||
     die "only ${free_gb} GB free on the disk of $QP_ROOT, a build needs at least $QP_MIN_FREE_GB (QP_MIN_FREE_GB)"
   log "${free_gb} GB free on the disk of $QP_ROOT"
@@ -360,13 +409,7 @@ cmd_run() {
 
   go_live "$name"
   RESULT=promoted MESSAGE="$name: $count treatments"
-
-  # Keep the newest QP_KEEP indexes (and the live one in any case)
-  ls -1 "$QP_ROOT/indexes" | grep -v '^\.' | sort -r | tail -n +"$((QP_KEEP + 1))" | while read -r old; do
-    [ "indexes/$old" = "$(readlink "$QP_ROOT/current")" ] && continue
-    log "removing old index $old"
-    rm -rf "${QP_ROOT:?}/indexes/$old"
-  done
+  prune
 }
 
 cmd_rollback() {
@@ -394,6 +437,28 @@ cmd_list() {
   done
 }
 
+# KEY=value lines; install.sh reads the settings from here, so that it gets
+# the same values as the runs
+cmd_settings() {
+  local key
+  for key in "${SETTINGS[@]}"; do
+    echo "$key=${!key}"
+  done
+}
+
+# settings_problem: what is wrong with the settings, if anything
+settings_problem() {
+  if [ -n "$CONFIG_ERROR" ]; then
+    echo "$CONFIG_ERROR"
+  elif [ -z "$QP_NETWORK" ] && [ ! -e "$QP_CONFIG" ]; then
+    echo "no $QP_CONFIG with the settings of this host (see qlever-plazi.env.example)"
+  elif [ -z "$QP_NETWORK" ]; then
+    echo "QP_NETWORK is not set in $QP_CONFIG: the Docker network Traefik uses"
+  elif [[ ! $QP_KEEP =~ ^[0-9]+$ || ! $QP_MIN_FREE_GB =~ ^[0-9]+$ ]]; then
+    echo "QP_KEEP and QP_MIN_FREE_GB must be whole numbers"
+  fi
+}
+
 # Cleanup and status for run/rollback: a failed build leaves the live index
 # untouched and is removed, except for its log.
 finish() {
@@ -412,15 +477,25 @@ finish() {
 }
 
 main() {
-  local cmd=${1:-}
+  local cmd=${1:-} problem
   shift || true
   case $cmd in
-    run | rollback) ;;
-    list) cmd_list; return ;;
-    *) echo "usage: $0 run | rollback NAME | list" >&2; exit 2 ;;
+    run | rollback | list | settings) ;;
+    *) echo "usage: $0 run | rollback NAME | list | settings" >&2; exit 2 ;;
   esac
 
-  [ -n "$QP_NETWORK" ] || { echo "QP_NETWORK is not set (in $QP_CONFIG): the Docker network Traefik uses" >&2; exit 2; }
+  # The status is written to QP_ROOT, so this problem only shows in the journal
+  # (the service gets a checked QP_ROOT from install.sh)
+  if [[ $QP_ROOT != /* || $QP_ROOT == *[[:space:]%]* || $(realpath -ms -- "$QP_ROOT") == / ]]; then
+    echo "QP_ROOT must be an absolute path other than /, without spaces or %, not '$QP_ROOT'" >&2
+    exit 2
+  fi
+  problem=$(settings_problem)
+  case $cmd in
+    list) cmd_list; return ;;
+    settings) [ -z "$problem" ] || { echo "$problem" >&2; exit 2; }; cmd_settings; return ;;
+  esac
+
   mkdir -p "$QP_ROOT/indexes" "$PUBLIC/logs"
   exec 9> "$QP_ROOT/.lock"
   flock -n 9 || { echo "another run is active" >&2; exit 1; }
@@ -429,8 +504,11 @@ main() {
   LOG=$PUBLIC/logs/$RUN_ID.txt
   exec > >(tee -a "$LOG") 2>&1
   trap finish EXIT
-  ensure_status_server
   log "qlever-plazi $cmd $* ($(git -C "$REPO_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown))"
+  # Failing here rather than before the trap writes a failed status, which
+  # takes down the health file, so that monitoring notices
+  [ -z "$problem" ] || die "$problem"
+  ensure_status_server
   "cmd_$cmd" "$@"
 }
 
