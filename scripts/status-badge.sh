@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 # status-badge.sh STATUS_JSON: prints an SVG badge for the Upptime board,
-# e.g. "qlever | 891,091 treatments · 100% of LINDAS · 1d"
+# e.g. "qlever | 902,893 treatments · 100% of LINDAS · built 2026-10-08".
+# The build date rather than an age: the badge is only rewritten by a run.
 set -euo pipefail
 
 status=$1
 label=qlever
-read -r healthy count ratio age < <(jq -r '[.healthy, (.treatments.live // "?"), (.treatments.ratio // "?"), (.index_age_hours // "?")] | @tsv' "$status")
+read -r healthy count ratio built < <(jq -r '[.healthy, (.treatments.live // "?"), (.treatments.ratio // "?"), (.index.built_at[0:10] // "?")] | @tsv' "$status")
 
 fmt_count=$(printf "%'d" "$count" 2>/dev/null || echo "$count")
 [ "$count" = "?" ] && fmt_count="?"
 pct=$([ "$ratio" = "?" ] && echo "?" || awk -v r="$ratio" 'BEGIN { printf "%d%%", r * 100 + 0.5 }')
-if [ "$age" = "?" ]; then age_txt="?"; elif [ "$age" -lt 48 ]; then age_txt="${age}h"; else age_txt="$((age / 24))d"; fi
-text="$fmt_count treatments · $pct of LINDAS · $age_txt old"
+text="$fmt_count treatments · $pct of LINDAS · built $built"
 color=$([ "$healthy" = true ] && echo "#2ea44f" || echo "#d73a49")
 
 # Verdana 11px averages about 6.5px per character
