@@ -20,7 +20,7 @@ $QP_ROOT/                          the data
 
 ### Setting up a host
 
-The host needs Docker, a [Traefik](https://traefik.io/) that serves the public host name with its Docker provider, and a disk with about 50 GB free for the data. Traefik is required because the zero-downtime switch relies on it routing only to healthy containers.
+The host needs Docker, `jq`, `git`, `curl`, a [Traefik](https://traefik.io/) that serves the public host name with its Docker provider, and a disk with about 50 GB free for the data. Traefik is required because the zero-downtime switch relies on it routing only to healthy containers.
 
 Run as root, from a checkout of this repository:
 
@@ -32,9 +32,9 @@ sudo ./systemd/install.sh   # sets everything up and runs the first build (about
 
 `QP_CERTRESOLVER` is the name of a certificate resolver in Traefik's configuration (`leresolver` if not set). Set it empty only if Traefik has a certificate for `QP_HOST` without one; otherwise it serves its self-signed default certificate.
 
-The second call refuses to continue while another deployment may still serve `QP_HOST` (a container routed by Traefik to that host, running or stopped, or a crontab that runs `qlever-plazi.sh`), because the switch only stops containers of this setup. Otherwise it creates the system user and `QP_ROOT` (which must not overlap the user's home directory; an earlier `install.sh` put that at `/var/lib/qlever-plazi`), clones this repository to `/opt/qlever-plazi`, and installs and enables the timer. The unit gets `QP_ROOT` and a dependency on its mount from a drop-in, so after changing `QP_ROOT`, run `install.sh` again. Unless a server of this setup runs on the live index already, it then runs the first build, with `QP_FORCE=1` since there may be no live treatment count to compare with. It is safe to run again, e.g. after changing the units in `systemd/`.
+The second call refuses to continue while another deployment may still serve `QP_HOST` (a container routed by Traefik to that host, running or stopped, or a crontab that runs `qlever-plazi.sh`), because the switch only stops containers of this setup. Otherwise it creates the system user and `QP_ROOT` (which must not overlap the user's home directory; an earlier `install.sh` put that at `/var/lib/qlever-plazi`), clones this repository to `/opt/qlever-plazi`, and installs and enables the timer. The unit gets `QP_ROOT` and a dependency on its mount from a drop-in, so after changing `QP_ROOT`, run `install.sh` again. Unless a healthy server of this setup runs on the live index already, it then runs the first build, with `QP_FORCE=1` since there may be no live treatment count to compare with. It is safe to run again, e.g. after changing the units in `systemd/`.
 
-The host settings are read by the script itself, so the operations below use them too. Variables set in the environment take precedence over the file. `qlever-plazi.sh settings` checks the file and prints the settings in effect; `install.sh` gets them from there, from the file alone. A run with a broken file (an unknown or repeated key, a line that is not `KEY=value`, an unquoted value with spaces), or without `QP_NETWORK`, fails like a failed check, so it shows in `health`.
+The host settings are read by the script itself, so the operations below use them too. Variables set in the environment take precedence over the file. `qlever-plazi.sh settings` checks the file and prints the settings in effect; `install.sh` gets them from there, from the file alone. A run with a broken file (anything `settings` rejects: an unknown or repeated key, a line that is not `KEY=value`, an unquoted value with spaces, a number that is not one), or without `QP_NETWORK`, fails like a failed check, so it shows in `health`. That needs a known `QP_ROOT`, which the unit always has; a manual run without one only reports the problem.
 
 The timer catches up on a run missed while the host was down (`Persistent=true`). Run logs go to the journal as well as to the status page:
 
@@ -47,7 +47,7 @@ journalctl -u qlever-plazi                 # logs
 A run takes these steps:
 
 1. **Gate.** It reads the `till` of the newest completed job from `hooknq.ld.plazi.org/jobs.json?from=0&till=2` and the latest CoL release tag. If both match `current/stamp.json`, it logs `skipped — no change` and stops.
-2. **Disk space.** The build needs about 35 GB while it runs, and `QP_ROOT` may share its disk with other services. Indexes beyond the kept ones (see Prune) and the build directories of interrupted runs are removed first; then, with less than 50 GB free (`QP_MIN_FREE_GB`), the run fails before downloading anything.
+2. **Disk space.** The build needs about 35 GB while it runs, and `QP_ROOT` may share its disk with other services. Indexes beyond the kept ones (see Prune) and the build directories of interrupted runs are removed first; then, with less than 50 GB free (`QP_MIN_FREE_GB`), the run fails before downloading anything. If the kept indexes alone leave too little, every run fails (and `health` shows it) until space is freed or `QP_KEEP` lowered.
 3. **Download and verify.** The treatments export has to end with `# END till=<commit> lines=<n> sha256=<hex>`, and the line count and hash of everything before that line have to match. Otherwise the run stops before indexing.
 
    This check is essential. The HTTP status is sent before the export runs, so a truncated export still arrives as a successful 200. Between 2026-09-13 and 2026-09-25 that is how the endpoint ended up serving 318k of 891k treatments: the export was cut off after 2^24 triples.

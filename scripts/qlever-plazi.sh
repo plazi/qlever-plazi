@@ -20,7 +20,8 @@
 # Settings of the host (data directory, Docker network of Traefik, ...) are
 # read from $QP_CONFIG, see qlever-plazi.env.example. Variables already set in
 # the environment take precedence over the file. A run with a broken settings
-# file fails like a failed check, so that the status shows it.
+# file fails like a failed check, so that the status shows it (once QP_ROOT is
+# known, as it is for the service).
 set -euo pipefail
 
 QP_CONFIG=${QP_CONFIG:-/etc/qlever-plazi.env}
@@ -59,6 +60,9 @@ if [ -f "$QP_CONFIG" ] && [ -r "$QP_CONFIG" ]; then
 elif [ -e "$QP_CONFIG" ]; then
   CONFIG_ERROR="cannot read $QP_CONFIG"
 fi
+
+# Whether QP_ROOT comes from the file or the environment, see main
+QP_ROOT_GIVEN=${QP_ROOT:+yes}
 
 # Host settings
 QP_ROOT=${QP_ROOT:-/var/lib/qlever-plazi}
@@ -448,14 +452,20 @@ cmd_settings() {
 
 # settings_problem: what is wrong with the settings, if anything
 settings_problem() {
+  local key
   if [ -n "$CONFIG_ERROR" ]; then
     echo "$CONFIG_ERROR"
   elif [ -z "$QP_NETWORK" ] && [ ! -e "$QP_CONFIG" ]; then
     echo "no $QP_CONFIG with the settings of this host (see qlever-plazi.env.example)"
   elif [ -z "$QP_NETWORK" ]; then
     echo "QP_NETWORK is not set in $QP_CONFIG: the Docker network Traefik uses"
-  elif [[ ! $QP_KEEP =~ ^[0-9]+$ || ! $QP_MIN_FREE_GB =~ ^[0-9]+$ ]]; then
-    echo "QP_KEEP and QP_MIN_FREE_GB must be whole numbers"
+  else
+    # awk would read e.g. 0,98 as 0, which passes every check
+    [[ $QP_MIN_RATIO =~ ^[0-9]*\.?[0-9]+$ ]] || { echo "QP_MIN_RATIO must be a number like 0.98"; return; }
+    [[ $QP_FORCE == [01] ]] || { echo "QP_FORCE must be 0 or 1"; return; }
+    for key in QP_KEEP QP_MIN_FREE_GB QP_DRAIN_SECONDS; do
+      [[ ${!key} =~ ^(0|[1-9][0-9]*)$ ]] || { echo "$key must be a whole number"; return; }
+    done
   fi
 }
 
@@ -485,21 +495,34 @@ main() {
   esac
 
   # The status is written to QP_ROOT, so this problem only shows in the journal
-  # (the service gets a checked QP_ROOT from install.sh)
-  if [[ $QP_ROOT != /* || $QP_ROOT == *[[:space:]%]* || $(realpath -ms -- "$QP_ROOT") == / ]]; then
-    echo "QP_ROOT must be an absolute path other than /, without spaces or %, not '$QP_ROOT'" >&2
+  # (the service gets a checked QP_ROOT from install.sh). It must be in plain
+  # form, like the mount sources Docker reports (see ensure_status_server),
+  # without the : of docker -v, and without anything systemd would parse in
+  # data.conf.
+  if [ "$(realpath -ms -- "$QP_ROOT")" != "$QP_ROOT" ] || [ "$QP_ROOT" = / ] ||
+    [[ $QP_ROOT == *[[:space:]%:\"\'\\]* ]]; then
+    echo "QP_ROOT must be a plain absolute path other than / (no trailing /, // or ..;" \
+      "no spaces, quotes, \\, : or %), not '$QP_ROOT'" >&2
     exit 2
   fi
   problem=$(settings_problem)
   case $cmd in
-    list) cmd_list; return ;;
+    list) [ -z "$problem" ] || echo "WARNING: $problem" >&2; cmd_list; return ;;
     settings) [ -z "$problem" ] || { echo "$problem" >&2; exit 2; }; cmd_settings; return ;;
   esac
+  # Without a QP_ROOT of its own (no settings file, or a broken QP_ROOT line),
+  # a failed status would go to the default one, which may be another setup's
+  if [ -n "$problem" ] && [ -z "$QP_ROOT_GIVEN" ]; then
+    echo "$problem" >&2
+    exit 2
+  fi
 
   mkdir -p "$QP_ROOT/indexes" "$PUBLIC/logs"
   exec 9> "$QP_ROOT/.lock"
   flock -n 9 || { echo "another run is active" >&2; exit 1; }
 
+  # Used by finish; not from the environment
+  CANDIDATE='' BUILD_DIR='' RESULT='' MESSAGE=''
   RUN_ID=$(date -u +%Y-%m-%dT%H-%M-%SZ)
   LOG=$PUBLIC/logs/$RUN_ID.txt
   exec > >(tee -a "$LOG") 2>&1
