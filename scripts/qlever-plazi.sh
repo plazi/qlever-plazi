@@ -201,10 +201,15 @@ data_dir() {
 }
 
 ensure_status_server() {
-  local source
+  local source max_size
   source=$(docker inspect -f '{{range .Mounts}}{{.Source}}{{end}}' "$QP_PREFIX-status" 2>/dev/null || true)
+  max_size=$(docker inspect -f '{{index .HostConfig.LogConfig.Config "max-size"}}' "$QP_PREFIX-status" 2>/dev/null || true)
   if [ -n "$source" ] && [ "$source" != "$QP_ROOT/public" ]; then
     log "status server serves $source, recreating it for $QP_ROOT/public"
+    docker rm -f "$QP_PREFIX-status" > /dev/null
+  elif [ -n "$source" ] && [[ $max_size == '' || $max_size == '<no value>' ]]; then
+    # Created before LOG_OPTS; log options only apply to a new container
+    log "status server keeps its logs unbounded, recreating it"
     docker rm -f "$QP_PREFIX-status" > /dev/null
   fi
   case $(docker inspect -f '{{.State.Running}}' "$QP_PREFIX-status" 2>/dev/null) in
@@ -300,10 +305,15 @@ prune() {
 # prune_images: each run pulls the latest upstream image and leaves the previous
 # one behind, untagged, on the disk Docker shares with QP_ROOT (14 images, 7 GB
 # by 2026-10). Removes those that no kept index was built with; the tagged one
-# stays for the next run, and docker refuses to remove an image in use.
+# stays for the next run, and docker refuses to remove an image in use. A
+# rollback to an index whose image is gone (e.g. removed by a test setup with
+# another QP_ROOT) pulls it again by its digest.
 prune_images() {
-  local keep ref id tag
-  keep=$(cat "$QP_ROOT"/indexes/*/stamp.json 2>/dev/null | jq -r .image | sort -u)
+  local keep stamp ref id tag
+  keep=$(for stamp in "$QP_ROOT"/indexes/*/stamp.json; do
+    [ -f "$stamp" ] || continue
+    jq -r .image "$stamp"
+  done | sort -u)
   docker images --digests --format '{{.Repository}}@{{.Digest}} {{.ID}} {{.Tag}}' "${QP_IMAGE%:*}" |
     while read -r ref id tag; do
       [ "$tag" = '<none>' ] || continue
