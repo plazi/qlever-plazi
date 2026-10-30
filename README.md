@@ -60,7 +60,7 @@ A run takes these steps:
 
    If any check fails, the run fails and the live index keeps serving.
 6. **Go live.** Once the checks pass, the new server's Docker health check turns healthy and Traefik starts routing to it. Then the `current` symlink is swapped atomically (`ln -sfn … current.new && mv -Tf current.new current`) and the previous server is stopped. The endpoint keeps serving throughout.
-7. **Prune.** The three newest indexes are kept for rollback (`QP_KEEP`), plus the live one in any case.
+7. **Prune.** The three newest indexes are kept for rollback (`QP_KEEP`), plus the live one in any case. Of the earlier QLever images, those that no kept index was built with are removed: each run pulls the latest one, and on the host of qlever.ld.plazi.org the images share `/fastssd` with the indexes.
 
 Every run writes these files under `https://qlever.ld.plazi.org/status/`:
 
